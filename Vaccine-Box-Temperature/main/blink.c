@@ -39,11 +39,11 @@ void blink_task(void *arg) {
 
         while (1) {      
             Core2ForAWS_Sk6812_SetSideColor(SK6812_SIDE_LEFT, 0x000000);
-            Core2ForAWS_Sk6812_SetSideColor(SK6812_SIDE_RIGHT, 0xffffff);
+            Core2ForAWS_Sk6812_SetSideColor(SK6812_SIDE_RIGHT, 0xff0000);
             Core2ForAWS_Sk6812_Show();
             vTaskDelay(100);
             
-            Core2ForAWS_Sk6812_SetSideColor(SK6812_SIDE_LEFT, 0xffffff);
+            Core2ForAWS_Sk6812_SetSideColor(SK6812_SIDE_LEFT, 0xff0000);
             Core2ForAWS_Sk6812_SetSideColor(SK6812_SIDE_RIGHT, 0x000000);
             Core2ForAWS_Sk6812_Show();
             vTaskDelay(100);

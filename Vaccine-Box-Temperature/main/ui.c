@@ -76,6 +76,27 @@ void ui_textarea_add(char *baseTxt, char *param, size_t paramLen) {
     }
 }
 
+void ui_textarea_add_number(char *baseTxt, int param, size_t paramLen) {
+    if( baseTxt != NULL ){
+        xSemaphoreTake(xGuiSemaphore, portMAX_DELAY);
+        if (param != 0 && paramLen != 0){
+            size_t baseTxtLen = strlen(baseTxt);
+            ui_textarea_prune(paramLen);
+            size_t bufLen = baseTxtLen + paramLen;
+            char buf[(int) bufLen];
+            sprintf(buf, baseTxt, param);
+            lv_textarea_add_text(out_txtarea, buf);
+        } 
+        else{
+            lv_textarea_add_text(out_txtarea, baseTxt); 
+        }
+        xSemaphoreGive(xGuiSemaphore);
+    } 
+    else{
+        ESP_LOGE(TAG, "Textarea baseTxt is NULL!");
+    }
+}
+
 void ui_wifi_label_update(bool state){
     xSemaphoreTake(xGuiSemaphore, portMAX_DELAY);
     if (state == false) {

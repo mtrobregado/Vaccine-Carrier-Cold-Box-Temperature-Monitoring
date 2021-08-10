@@ -24,22 +24,6 @@
  * This example takes the parameters from the build configuration and establishes a connection to AWS IoT Core over MQTT.
  *
  * Some configuration is required. Visit https://edukit.workshop.aws
- * 
- * Project Name: Vaccine Carrier Cold Box Temperature Monitoring.
- * Author: Markel Robregado
- *         Lemuel Adane
- * 
- * Date Created: 8/5/2021
- * 
- * Project Description:
- * - AWS IOT EduKit, collect sensor data via UART from a Texas Instruments Sub 1-Ghz sensor network, 
- *   and send these data to AWS IOT. Sub 1-Ghz sensor network consist of collector and sensor nodes. 
- *   Each sensor node is attached to a vaccine carrier cold box.
- * 
- * Hardware:
- * - AWS IOT EduKit
- * - CC1352R Launchpad (collector)
- * - LPSTK-CC1352R (sensor node connected to vaccine carrier cold box)
  *
  */
 
@@ -89,7 +73,8 @@ extern const uint8_t aws_root_ca_pem_start[] asm("_binary_aws_root_ca_pem_start"
 extern const uint8_t aws_root_ca_pem_end[] asm("_binary_aws_root_ca_pem_end");
 
 
-/*! UART Data message: sent from the collector to AWS IOT EduKit */ 
+/*! UART Data message: sent from the collector to AWS IOT EduKit */
+ 
 typedef struct _uart_sensormsg_t
 {
   uint16_t nodecnt;
@@ -101,6 +86,9 @@ typedef struct _uart_sensormsg_t
 }uart_sensorMsg_t;
 
 uart_sensorMsg_t uartmsg;
+static int mintemp = 2;
+static int maxtemp = 25;
+static double dtemp = 0;
 
 /* Default MQTT HOST URL is pulled from the aws_iot_config.h */
 char HostAddress[255] = AWS_IOT_MQTT_HOST;
@@ -125,15 +113,21 @@ void iot_subscribe_callback_handler(AWS_IoT_Client *pClient, char *topicName, ui
                                     IoT_Publish_Message_Params *params, void *pData) {
     ESP_LOGI(TAG, "Subscribe callback");
     ESP_LOGI(TAG, "%.*s\t%.*s", topicNameLen, topicName, (int) params->payloadLen, (char *)params->payload);
-    if (strstr(topicName, "/blink") != NULL) {
-        // Get state of the FreeRTOS task, "blinkTask", using it's task handle.
-        // Suspend or resume the task depending on the returned task state
-        eTaskState blinkState = eTaskGetState(xBlink);
-        if (blinkState == eSuspended){
-            vTaskResume(xBlink);
-        } else{
-            vTaskSuspend(xBlink);
-        }
+    if (strstr(topicName, "/temprange") != NULL) {
+     
+        cJSON *item;       
+        cJSON *root = cJSON_Parse((char *)params->payload);
+             
+        item = cJSON_GetObjectItem(root, "min");
+        mintemp = *(&(item->valueint));             
+       
+        item = cJSON_GetObjectItem(root, "max");
+        maxtemp = *(&(item->valueint));        
+
+        cJSON_Delete(root);
+
+        ui_textarea_add_number("\nnew min temp: %d\n", mintemp, sizeof(int));    
+        ui_textarea_add_number("new max temp: %d\n", maxtemp, sizeof(int));      
     }
 }
 
@@ -163,11 +157,25 @@ static void publisher(AWS_IoT_Client *client, char *base_topic, uint16_t base_to
   
     IoT_Publish_Message_Params paramsQOS0; 
     paramsQOS0.qos = QOS0;    
-    paramsQOS0.isRetained = 0;
-    double dtemp = 0;
+    paramsQOS0.isRetained = 0;    
     
     dtemp = (double)((uartmsg.temp * CELSIUS_PER_LSB) - 40);   
     dtemp = f_round(dtemp, 2);  
+
+    // Get state of the FreeRTOS task, "blinkTask", using it's task handle.
+    eTaskState blinkState = eTaskGetState(xBlink);
+
+    if((dtemp < mintemp) || (dtemp > maxtemp)){        
+        if (blinkState == eSuspended){
+            vTaskResume(xBlink);
+        } 
+    }
+    else if((dtemp >= mintemp) && (dtemp <= maxtemp)){        
+        vTaskSuspend(xBlink);  
+        Core2ForAWS_Sk6812_SetSideColor(SK6812_SIDE_LEFT, 0x000000);
+        Core2ForAWS_Sk6812_SetSideColor(SK6812_SIDE_RIGHT, 0x000000);
+        Core2ForAWS_Sk6812_Show();             
+    }
 
     cJSON *payload = cJSON_CreateObject();
     cJSON *container_id = cJSON_CreateNumber(uartmsg.containerid);
@@ -344,13 +352,10 @@ void app_main()
     
     ui_init();
     initialise_wifi();
-
-    rtc_date_t date;
- 
-    BM8563_GetTime(&date);
-    ESP_LOGE(TAG, "Date: %d-%02d-%02d Time: %02d:%02d:%02d",
-            date.year, date.month, date.day, date.hour, date.minute, date.second);
+   
+    ui_textarea_add_number("\ndefault min temp: %d\n", mintemp, sizeof(int));    
+    ui_textarea_add_number("default max temp: %d\n", maxtemp, sizeof(int));
 
     xTaskCreatePinnedToCore(&aws_iot_task, "aws_iot_task", 4096 * 2, NULL, 5, NULL, 1);
-    //xTaskCreatePinnedToCore(&blink_task, "blink_task", 4096 * 1, NULL, 2, &xBlink, 1);
+    xTaskCreatePinnedToCore(&blink_task, "blink_task", 4096 * 1, NULL, 2, &xBlink, 1);
 }
