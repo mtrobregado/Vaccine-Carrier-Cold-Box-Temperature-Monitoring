@@ -333,7 +333,7 @@ static void uart_rx_task(void *arg){
                                                                                         
             
         }
-        vTaskDelay(pdMS_TO_TICKS(100)); // Read more frequently than transmit to ensure the messages are not erased from buffer.
+        vTaskDelay(pdMS_TO_TICKS(75)); 
     }
     free(data); // Free memory from external RAM
 }
