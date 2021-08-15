@@ -14,3 +14,6 @@
   - AWS IOT EduKit
   - CC1352R Launchpad (collector)
   - LPSTK-CC1352R (sensor node connected to vaccine carrier cold box)  
+  
+  Pre-requisites:
+  - See, getting started guide from this link. https://edukit.workshop.aws/en/getting-started.html
