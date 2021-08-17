@@ -58,8 +58,6 @@
 
 /* The time between each MQTT message publish in milliseconds */
 #define PUBLISH_INTERVAL_MS 3000
-
-#define roundz(x,d) ((floor(((x)*pow(10,d))+.5))/pow(10,d))
 #define CELSIUS_PER_LSB 0.0025177F
 
 /* The time prefix used by the logger. */
@@ -72,9 +70,7 @@ TaskHandle_t xBlink;
 extern const uint8_t aws_root_ca_pem_start[] asm("_binary_aws_root_ca_pem_start");
 extern const uint8_t aws_root_ca_pem_end[] asm("_binary_aws_root_ca_pem_end");
 
-
-/*! UART Data message: sent from the collector to AWS IOT EduKit */
- 
+/*! UART Data message: sent from the collector to AWS IOT EduKit */ 
 typedef struct _uart_sensormsg_t
 {
   uint16_t nodecnt;
@@ -86,15 +82,20 @@ typedef struct _uart_sensormsg_t
 }uart_sensorMsg_t;
 
 uart_sensorMsg_t uartmsg;
+
 static int mintemp = 2;
 static int maxtemp = 25;
 static double dtemp = 0;
+
+uint8_t publish_count = 0;
 
 /* Default MQTT HOST URL is pulled from the aws_iot_config.h */
 char HostAddress[255] = AWS_IOT_MQTT_HOST;
 
 /* Default MQTT port is pulled from the aws_iot_config.h */
 uint32_t port = AWS_IOT_MQTT_PORT;
+
+rtc_date_t date;
 
 double f_round(double dval, int n)
 {
@@ -129,6 +130,34 @@ void iot_subscribe_callback_handler(AWS_IoT_Client *pClient, char *topicName, ui
         ui_textarea_add_number("\nnew min temp: %d\n", mintemp, sizeof(int));    
         ui_textarea_add_number("new max temp: %d\n", maxtemp, sizeof(int));      
     }
+    else if (strstr(topicName, "/date") != NULL) {
+        cJSON *item;       
+        cJSON *root = cJSON_Parse((char *)params->payload);
+
+        item = cJSON_GetObjectItem(root, "year");
+        date.year = *(&(item->valueint)); 
+
+        item = cJSON_GetObjectItem(root, "month");
+        date.month = *(&(item->valueint)); 
+
+        item = cJSON_GetObjectItem(root, "day");
+        date.day = *(&(item->valueint)); 
+
+        item = cJSON_GetObjectItem(root, "hour");
+        date.hour = *(&(item->valueint)); 
+
+        item = cJSON_GetObjectItem(root, "minutes");
+        date.minute = *(&(item->valueint)); 
+
+        item = cJSON_GetObjectItem(root, "seconds");
+        date.second = *(&(item->valueint)); 
+
+        cJSON_Delete(root);
+
+        BM8563_SetTime(&date);
+
+        ui_textarea_add("\nNew date set\n", NULL, 0);
+    }
 }
 
 void disconnect_callback_handler(AWS_IoT_Client *pClient, void *data) {
@@ -158,6 +187,12 @@ static void publisher(AWS_IoT_Client *client, char *base_topic, uint16_t base_to
     IoT_Publish_Message_Params paramsQOS0; 
     paramsQOS0.qos = QOS0;    
     paramsQOS0.isRetained = 0;    
+    char cdate[100] = {0,};
+
+    BM8563_GetTime(&date);
+    
+    sprintf(cdate,"Date: %d-%02d-%02d Time: %02d:%02d:%02d", date.year, date.month, date.day, 
+                                                            date.hour, date.minute, date.second);
     
     dtemp = (double)((uartmsg.temp * CELSIUS_PER_LSB) - 40);   
     dtemp = f_round(dtemp, 2);  
@@ -165,6 +200,7 @@ static void publisher(AWS_IoT_Client *client, char *base_topic, uint16_t base_to
     // Get state of the FreeRTOS task, "blinkTask", using it's task handle.
     eTaskState blinkState = eTaskGetState(xBlink);
 
+    
     if((dtemp < mintemp) || (dtemp > maxtemp)){        
         if (blinkState == eSuspended){
             vTaskResume(xBlink);
@@ -178,11 +214,13 @@ static void publisher(AWS_IoT_Client *client, char *base_topic, uint16_t base_to
     }
 
     cJSON *payload = cJSON_CreateObject();
+    cJSON *date_time = cJSON_CreateString((const char*)cdate);
     cJSON *container_id = cJSON_CreateNumber(uartmsg.containerid);
     cJSON *vaccine_name = cJSON_CreateString((const char *)uartmsg.vaccinename);    
     cJSON *temperature = cJSON_CreateNumber(dtemp);
     cJSON *batt_value = cJSON_CreateNumber(uartmsg.battval);
 
+    cJSON_AddItemToObject(payload, "timestamp", date_time);
     cJSON_AddItemToObject(payload, "container_id", container_id);
     cJSON_AddItemToObject(payload, "vaccine_name", vaccine_name);
     cJSON_AddItemToObject(payload, "temperature", temperature);
@@ -191,15 +229,15 @@ static void publisher(AWS_IoT_Client *client, char *base_topic, uint16_t base_to
     const char *JSONPayload = cJSON_Print(payload);
     paramsQOS0.payload = (void *) JSONPayload;
     paramsQOS0.payloadLen = strlen(JSONPayload);
-
+    
     // Publish and ignore if "ack" was received or  from AWS IoT Core  
     IoT_Error_t rc = aws_iot_mqtt_publish(client, base_topic, base_topic_len, &paramsQOS0);
-    if (rc != SUCCESS){
+        if (rc != SUCCESS){
         ESP_LOGE(TAG, "Publish QOS0 error %i", rc);
         rc = SUCCESS;
     }
 
-    ui_textarea_add("%s", (char *)JSONPayload, paramsQOS0.payloadLen);
+    ui_textarea_add("%s", (char *)JSONPayload, paramsQOS0.payloadLen);    
     cJSON_Delete(payload);
 }
 
@@ -298,20 +336,23 @@ void aws_iot_task(void *param) {
              client_id);
     
     ui_textarea_add("Attempting publish to: %s\n", base_publish_topic, BASE_PUBLISH_TOPIC_LEN) ;
+
+    
     while((NETWORK_ATTEMPTING_RECONNECT == rc || NETWORK_RECONNECTED == rc || SUCCESS == rc)) {
 
         //Max time the yield function will wait for read messages
         rc = aws_iot_mqtt_yield(&client, 100);
         if(NETWORK_ATTEMPTING_RECONNECT == rc) {
             // If the client is attempting to reconnect we will skip the rest of the loop.
-            continue;
+                continue;
         }
 
         ESP_LOGD(TAG, "Stack remaining for task '%s' is %d bytes", pcTaskGetTaskName(NULL), uxTaskGetStackHighWaterMark(NULL));
         vTaskDelay(pdMS_TO_TICKS(PUBLISH_INTERVAL_MS));
-        
+            
         publisher(&client, base_publish_topic, BASE_PUBLISH_TOPIC_LEN);
     }
+    
 
     ESP_LOGE(TAG, "An error occurred in the main loop.");
     abort();
@@ -319,20 +360,21 @@ void aws_iot_task(void *param) {
  
 static void uart_rx_task(void *arg){
     int rxBytes;
-    uint8_t *data = heap_caps_malloc(UART_RX_BUF_SIZE, MALLOC_CAP_SPIRAM); // Allocate space for message in external RAM
     
+    uint8_t *data = heap_caps_malloc(UART_RX_BUF_SIZE, MALLOC_CAP_SPIRAM); // Allocate space for message in external RAM    
     
     while (1) {
         rxBytes = Core2ForAWS_Port_C_UART_Receive(data);
         if (rxBytes > 0) {
 
             memcpy(&uartmsg, data, sizeof(uartmsg));
+            
             ESP_LOGI(TAG, "node cnt: %d, container id: %d, vaccine name: %s, temp: %.2d, batt: %d", uartmsg.nodecnt, uartmsg.containerid, 
                                                                                                     uartmsg.vaccinename, uartmsg.temp, 
                                                                                                     uartmsg.battval);
                                                                                         
             
-        }
+        }        
         vTaskDelay(pdMS_TO_TICKS(75)); 
     }
     free(data); // Free memory from external RAM
@@ -340,13 +382,13 @@ static void uart_rx_task(void *arg){
 
 void app_main()
 {
-    Core2ForAWS_Init(); 
+    Core2ForAWS_Init();     
 
     esp_err_t err = Core2ForAWS_Port_PinMode(PORT_C_UART_TX_PIN, UART);
     if (err == ESP_OK){
         Core2ForAWS_Port_C_UART_Begin(115200);
         xTaskCreate(uart_rx_task, "uart_rx", 1024*2, NULL, configMAX_PRIORITIES, NULL);               
-    }
+    }    
 
     Core2ForAWS_Display_SetBrightness(80);
     
