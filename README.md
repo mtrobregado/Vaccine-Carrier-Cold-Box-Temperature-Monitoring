@@ -1,7 +1,7 @@
    
   Project Name: Vaccine Carrier Cold Box Temperature Monitoring
   Author: Markel Robregado
-          Lemuel Adane
+          
   
   Date Created: 8/5/2021
   
